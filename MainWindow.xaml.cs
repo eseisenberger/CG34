@@ -15,10 +15,30 @@ namespace CG34;
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private WriteableBitmap _source;
+    private WriteableBitmap _previousSource;
     private ShapeType? _selectedShapeTypeType;
     private Mode Mode = Mode.Select;
-    private Shape? CurrentShape;
+
+    public Shape? CurrentShape
+    {
+        get => _currentShape;
+        set => SetField(ref _currentShape, value);
+    }
+
     public ObservableCollection<Shape> Queue = [];
+    public ObservableCollection<Point> CurrentShapePoints = [];
+
+    public int X
+    {
+        get => _x;
+        set => SetField(ref _x, value);
+    }
+
+    public int Y
+    {
+        get => _y;
+        set => SetField(ref _y, value);
+    }
 
     public WriteableBitmap Source
     {
@@ -26,11 +46,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetField(ref _source, value);
     }
 
-    private const int DefaultWidth = 600;
-    private const int DefaultHeight = 400;
+    public int DefaultWidth { get; set; } = 600;
+    public int DefaultHeight { get; set; } = 400;
     private int Stride;
     private double _scale;
     private double Thickness = 1;
+    private int _x;
+    private int _y;
+    private Shape? _currentShape;
 
     public double Scale
     {
@@ -46,7 +69,49 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public MainWindow()
     {
-        _source = new WriteableBitmap(
+        ClearCanvas();
+        Stride = Source.Stride();
+        Scale = 1;
+        _previousSource = Source;
+        PreviewMouseWheel += OnMouseWheel;
+        KeyDown += OnKey;
+
+        InitializeComponent();
+    }
+
+    private async void OnMouse(object sender, MouseEventArgs e)
+    {
+        if (sender is not Image image)
+            return;
+
+        var pos = e.GetPosition(image);
+        X = (int)(pos.X / Scale);
+        Y = (int)(pos.Y / Scale);
+        if (CurrentShape is not null)
+        {
+            Source = new WriteableBitmap(_previousSource);
+            var pixels = Source.GetPixels();
+
+            var shape = new Shape(CurrentShape)
+            {
+                End = new Point(X, Y)
+            };
+            pixels = CurrentShape.Type switch
+            {
+                ShapeType.Line => await DrawLine(shape, pixels),
+                ShapeType.ThickLine => await DrawThickLine(shape, pixels, (int)Math.Round(Thickness, 0)),
+                ShapeType.Circle => await DrawCircle(shape, pixels),
+                _ => throw new ArgumentOutOfRangeException()
+            };
+            shape.Done = true;
+
+            Source.WritePixels(pixels);
+        }
+    }
+
+    private void ClearCanvas()
+    {
+        Source = new WriteableBitmap(
             DefaultWidth,
             DefaultHeight,
             96,
@@ -54,17 +119,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             PixelFormats.Pbgra32,
             null
         );
-
         var pixels = Source.GetPixels();
         pixels = pixels.Select(_ => (byte)255).ToArray();
         Source.WritePixels(pixels);
+        _previousSource = new WriteableBitmap(Source);
+    }
 
-        Stride = Source.Stride();
-        Scale = 1;
+    private async void OnKey(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Z)
+        {
+            if (Keyboard.Modifiers == ModifierKeys.Control)
+                await Undo();
+            else if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+                await Redo();
+        }
+    }
 
-        PreviewMouseWheel += OnMouseWheel;
+    private async Task Undo()
+    {
+        if (Queue.Count(s => s.Removed == false) == 0)
+            return;
 
-        InitializeComponent();
+        Queue.Last(s => s.Removed == false).Removed = true;
+        ClearCanvas();
+        foreach (var shape in Queue)
+        {
+            shape.Done = false;
+        }
+
+        await DrawAll();
     }
 
     private void OnMouseWheel(object sender, MouseWheelEventArgs e)
@@ -90,17 +174,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void Reset(object sender, RoutedEventArgs e)
     {
-        Source = new WriteableBitmap(
-            DefaultWidth,
-            DefaultHeight,
-            96,
-            96,
-            PixelFormats.Pbgra32,
-            null
-        );
-        var pixels = Source.GetPixels();
-        pixels = pixels.Select(_ => (byte)255).ToArray();
-        Source.WritePixels(pixels);
+        ClearCanvas();
         Queue.Clear();
     }
 
@@ -171,51 +245,58 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (CurrentShape is null)
                     throw new Exception("Shape is null in draw mode");
                 CurrentShape.End = position;
-                Queue.Insert(0, new Shape(CurrentShape));
-                await DrawLatest();
+                Queue.Add(new Shape(CurrentShape));
+                await DrawAll();
                 CurrentShape = null;
                 Mode = Mode.Selected;
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
         }
+
+        Queue = new ObservableCollection<Shape>(Queue.Where(s => s.Removed == false));
     }
 
-    private async Task DrawLatest()
+    private async Task Redo()
     {
-        var latest = Queue.FirstOrDefault();
-        if (latest == default)
+        if (Queue.Count(s => s.Removed) == 0)
             return;
 
-        var pixels = Source.GetPixels();
+        var shape = Queue.First(s => s.Removed);
+        shape.Removed = false;
+        await DrawAll();
+    }
 
-        pixels = latest.Type switch
+    private async Task DrawAll()
+    {
+        var pixels = _previousSource.GetPixels();
+
+        foreach (var shape in Queue.Where(s => s.Done == false && s.Removed == false))
         {
-            ShapeType.Line => await DrawLine(latest, pixels),
-            ShapeType.ThickLine => await DrawThickLine(latest, pixels, (int)Math.Round(Thickness, 0)),
-            ShapeType.Circle => await DrawCircle(latest, pixels),
-            _ => throw new ArgumentOutOfRangeException()
-        };
+            pixels = shape.Type switch
+            {
+                ShapeType.Line => await DrawLine(shape, pixels),
+                ShapeType.ThickLine => await DrawThickLine(shape, pixels, (int)Math.Round(Thickness, 0)),
+                ShapeType.Circle => await DrawCircle(shape, pixels),
+                _ => throw new ArgumentOutOfRangeException()
+            };
+            shape.Done = true;
+        }
 
         Source.WritePixels(pixels);
+        _previousSource = Source;
     }
 
     private async Task<byte[]> DrawLine(Shape shape, byte[] pixels)
     {
-        await Parallel.ForAsync(0, 3,
-            (channel, _) =>
-            {
-                SymmetricLine(
-                    (int)shape.Start.X,
-                    (int)shape.Start.Y,
-                    (int)shape.End.X,
-                    (int)shape.End.Y,
-                    0,
-                    channel,
-                    ref pixels
-                );
-                return ValueTask.CompletedTask;
-            });
+        DrawLineAA(
+            (int)shape.Start.X,
+            (int)shape.Start.Y,
+            (int)shape.End.X,
+            (int)shape.End.Y,
+            0,
+            ref pixels
+        );
         return pixels;
     }
 
@@ -346,37 +427,146 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             ++x;
-            // Plot the symmetrical points for the current (x, y)
             PlotCirclePoints(cx, cy, x, y, value, channel, ref pixels);
         }
     }
 
     private void PlotCirclePoints(int cx, int cy, int x, int y, byte value, int channel, ref byte[] pixels)
     {
-        // Octant 1
         PutPixel(cx + x, cy - y, value, channel, ref pixels);
-        // Octant 2
         PutPixel(cx + y, cy - x, value, channel, ref pixels);
-        // Octant 3
         PutPixel(cx - y, cy - x, value, channel, ref pixels);
-        // Octant 4
         PutPixel(cx - x, cy - y, value, channel, ref pixels);
-        // Octant 5
         PutPixel(cx - x, cy + y, value, channel, ref pixels);
-        // Octant 6
         PutPixel(cx - y, cy + x, value, channel, ref pixels);
-        // Octant 7
         PutPixel(cx + y, cy + x, value, channel, ref pixels);
-        // Octant 8
         PutPixel(cx + x, cy + y, value, channel, ref pixels);
     }
 
 
     private void PutPixel(int x, int y, byte value, int channel, ref byte[] pixels)
     {
+        if (x < 0 || x >= DefaultWidth || y < 0 || y >= DefaultHeight)
+            return;
+
+        var index = y * Stride + x * 4 + channel;
+        pixels[index] = value;
+    }
+
+    private byte GetPixel(int x, int y, int channel, byte[] pixels)
+    {
         x = Math.Clamp(x, 0, DefaultWidth - 1);
         y = Math.Clamp(y, 0, DefaultHeight - 1);
         var index = y * Stride + x * 4 + channel;
-        pixels[index] = value;
+        return pixels[index];
+    }
+
+    private void DrawLineAA(int x1, int y1, int x2, int y2, byte value, ref byte[] pixels,
+        int thickness = 1)
+    {
+        x1 = Math.Clamp(x1, 0, DefaultWidth);
+        x2 = Math.Clamp(x2, 0, DefaultWidth);
+
+        y1 = Math.Clamp(y1, 0, DefaultHeight);
+        y2 = Math.Clamp(y2, 0, DefaultHeight);
+
+        var steep = Math.Abs(y2 - y1) > Math.Abs(x2 - x1);
+
+        if (steep)
+        {
+            Console.WriteLine("Steep");
+            (x1, y1) = (y1, x1);
+            (x2, y2) = (y2, x2);
+        }
+
+        if (x1 > x2)
+        {
+            Console.WriteLine("Flip");
+            (x1, x2) = (x2, x1);
+            (y1, y2) = (y2, y1);
+        }
+
+        var dx = x2 - x1;
+        var dy = Math.Abs(y2 - y1);
+        var yStep = (y1 < y2) ? 1 : -1;
+        var d = 2 * (dy - dx);
+
+        int incrE = 2 * dy;
+        int incrNE = 2 * (dy - dx);
+
+        var x = x1;
+        var y = y1;
+
+        var length2 = 2 * Math.Sqrt(Math.Pow(dx, 2) + Math.Pow(dy, 2));
+        double D;
+        if (d <= 0)
+            D = (d + dx) / length2;
+        else
+            D = (d - dx) / length2;
+
+        double Du = (2 * dx - (d - dx)) / length2;
+        double Dl = (2 * dx + (d - dx)) / length2;
+        //Console.WriteLine("\n\n-------------------------\n\n");
+
+        Write(ref pixels);
+        while (x < x2)
+        {
+            if (d <= 0)
+            {
+                x++;
+                D = (d + dx) / length2;
+                Du = (2 * dx - (d + dx)) / length2;
+                Dl = (2 * dx + (d + dx)) / length2;
+                d += incrE;
+            }
+            else
+            {
+                y += yStep;
+                x++;
+                D = (d - dx) / length2;
+                Du = (2 * dx - (d - dx)) / length2;
+                Dl = (2 * dx + (d - dx)) / length2;
+                d += incrNE;
+            }
+
+            Write(ref pixels);
+        }
+
+        void Write(ref byte[] pixels)
+        {
+            if (steep)
+            {
+                IntensifyPixel(y + 1, x, Du, value, ref pixels);
+                IntensifyPixel(y, x, D, value, ref pixels, true);
+                IntensifyPixel(y - 1, x, Dl, value, ref pixels);
+            }
+            else
+            {
+                IntensifyPixel(x + 1, y, Dl, value, ref pixels);
+                IntensifyPixel(x, y, D, value, ref pixels, true);
+                IntensifyPixel(x - 1, y, Du, value, ref pixels);
+            }
+        }
+    }
+
+    void IntensifyPixel(int x, int y, double distance, byte value, ref byte[] pixels, bool main = false)
+    {
+        var intensity = GetIntensityFactor(x, y, distance);
+        //if (main)
+        //Console.WriteLine($"x:{x}, y:{y}, D:{distance:0.##}, int:{intensity:0.##}");
+        for (var channel = 0; channel < 3; channel++)
+        {
+            var scaledIntensity = (byte)(intensity * value + (1 - intensity) * GetPixel(x, y, channel, pixels));
+            PutPixel(x, y, scaledIntensity, channel, ref pixels);
+        }
+    }
+
+    double GetIntensityFactor(int x, int y, double distance)
+    {
+        var maxIntensity = 1.0;
+        var intensityFactor = maxIntensity - Math.Abs(distance);
+
+        intensityFactor = Math.Clamp(intensityFactor, 0, maxIntensity);
+        return intensityFactor;
     }
 }

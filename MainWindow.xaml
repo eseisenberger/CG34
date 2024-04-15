@@ -15,6 +15,7 @@
     <Window.Resources>
         <converters:ToggleConverter x:Key="ToggleConverter" />
         <converters:ScaleConverter x:Key="ScaleConverter" />
+        <converters:VisibilityConverter x:Key="VisibilityConverter" />
     </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
@@ -26,6 +27,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
         <Menu Grid.ColumnSpan="3">
             <MenuItem Header="_Open" Click="Open" />
@@ -72,23 +74,25 @@
 
             <ui:ToggleSwitch Grid.Column="1" Header="Antialiasing" Toggled="AntialiasingToggle" />
         </Grid>
+        <ScrollViewer Grid.Row="2" Grid.Column="1" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Auto">
+            <Grid Background="DimGray">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-        <Grid Grid.Row="2" Grid.Column="1" Background="DimGray">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <Border Grid.Row="1" Grid.Column="1" BorderBrush="Black" BorderThickness="1" HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                <Border Grid.Row="1" Grid.Column="1" BorderBrush="Black" BorderThickness="1"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
                     <Image Source="{Binding Source}" MouseDown="ImageMouseDown"
-                           RenderOptions.BitmapScalingMode="NearestNeighbor">
+                           RenderOptions.BitmapScalingMode="NearestNeighbor" MouseMove="OnMouse">
                         <Image.Width>
                             <MultiBinding Converter="{StaticResource ScaleConverter}">
                                 <Binding Path="Source.PixelWidth" />
@@ -102,7 +106,39 @@
                             </MultiBinding>
                         </Image.Height>
                     </Image>
-                </ScrollViewer>
+                </Border>
+            </Grid>
+        </ScrollViewer>
+        <Grid Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="200" />
+            </Grid.ColumnDefinitions>
+            <Border Grid.Column="0" BorderBrush="DarkGray" BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding X, Mode=OneWay}" Padding="0 2" />
+                    <TextBlock Text="," Padding="0 2" />
+                    <TextBlock Text="{Binding Y, Mode=OneWay}" Padding="0 2" />
+                    <TextBlock Text="px" Padding="0 2" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" BorderBrush="DarkGray" BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding DefaultWidth, Mode=OneWay}" Padding="0 2" />
+                    <TextBlock Text="x" Padding="0 2" />
+                    <TextBlock Text="{Binding DefaultHeight, Mode=OneWay}" Padding="0 2" />
+                    <TextBlock Text="px" Padding="0 2" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" BorderBrush="DarkGray" BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="3" BorderBrush="DarkGray" BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>
