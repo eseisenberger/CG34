@@ -361,7 +361,7 @@ public partial class MainWindow : INotifyPropertyChanged
         SaveFileDialog dialog = new()
         {
             Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
-            FileName = $"save_{DateTime.Now}",
+            FileName = $"save_{DateTime.Now.ToString("ddMMyyhhmmss")}",
             InitialDirectory = Path.GetFullPath(SaveDirectory),
             DefaultExt = ".json"
         };
