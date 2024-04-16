@@ -1,0 +1,37 @@
+﻿<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:materialIcons="clr-namespace:Material.Icons.WPF;assembly=Material.Icons.WPF"
+                    xmlns:ui="http://schemas.modernwpf.com/2019"
+                    xmlns:converters="clr-namespace:CG34.Converters"
+                    xmlns:cg34="clr-namespace:CG34">
+
+    <converters:ToggleConverter x:Key="ToggleConverter" />
+    <converters:ScaleConverter x:Key="ScaleConverter" />
+    <converters:ShapeTypeToIconConverter x:Key="ShapeTypeToIconConverter" />
+    <converters:ShapeTypeToVisibilityConverter x:Key="ShapeTypeToVisibilityConverter" />
+    <converters:BoolToColorConverter x:Key="BoolToColorConverter" />
+    <Style TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}" x:Key="ToolButton">
+        <Setter Property="IsChecked">
+            <Setter.Value>
+                <MultiBinding Converter="{StaticResource ToggleConverter}" Mode="OneWay">
+                    <Binding Path="SelectedShapeType"
+                             RelativeSource="{RelativeSource AncestorType=cg34:MainWindow}" Mode="OneWay" />
+                    <Binding Path="Content" RelativeSource="{RelativeSource Self}" Mode="OneWay" />
+                </MultiBinding>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="ContentTemplate">
+            <Setter.Value>
+                <DataTemplate>
+                    <materialIcons:MaterialIcon>
+                        <materialIcons:MaterialIcon.Kind>
+                            <Binding Converter="{StaticResource ShapeTypeToIconConverter}" />
+                        </materialIcons:MaterialIcon.Kind>
+                    </materialIcons:MaterialIcon>
+                </DataTemplate>
+            </Setter.Value>
+        </Setter>
+        <Setter Property="Margin" Value="4 2" />
+        <Setter Property="Foreground" Value="{ui:ThemeResource TextFillColorPrimary}" />
+    </Style>
+</ResourceDictionary>

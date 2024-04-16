@@ -1,39 +1,81 @@
-﻿using System.ComponentModel;
+﻿using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace CG34.Classes;
 
-public class Shape(Point start, Point end, ShapeType type, Color color, object? data = null) : INotifyPropertyChanged
+public class Shape(
+    Point center,
+    IEnumerable<Point> vertices,
+    Dictionary<Point, (int, int)> midpoints,
+    ShapeType type,
+    Color color,
+    int thickness = 1)
+    : INotifyPropertyChanged
 {
-    public Shape() : this(default!, default!, default!, default!)
+    public Shape() : this(default!, [], [], default!, default!)
     {
     }
 
-    public Shape(Shape other) : this(other.Start, other.End, other.Type, other.Color, other.Data)
+    public Shape(Shape other) : this(other.Center, other.Vertices, other.Midpoints, other.Type, other.Color,
+        other.Thickness)
     {
     }
 
-    public Point Start
+    public byte[] Values =>
+    [
+        Color.B,
+        Color.G,
+        Color.R,
+        Color.A
+    ];
+
+    public ShapeType Type
     {
-        get => _start;
-        set => SetField(ref _start, value);
+        get => _type;
+        set => SetField(ref _type, value);
     }
 
-    public Point End
+    public Color Color
     {
-        get => _end;
-        set => SetField(ref _end, value);
+        get => _color;
+        set
+        {
+            if (SetField(ref _color, value)) OnPropertyChanged(nameof(Values));
+        }
     }
 
-    public ShapeType Type = type;
-    public Color Color = color;
-    public object? Data = data;
+    public int Thickness
+    {
+        get => _thickness;
+        set => SetField(ref _thickness, value);
+    }
 
     [JsonIgnore] public bool Done = false;
     [JsonIgnore] public bool Removed = false;
-    private Point _start = start;
-    private Point _end = end;
+
+    [JsonIgnore]
+    public bool Selected
+    {
+        get => _selected;
+        set => SetField(ref _selected, value);
+    }
+
+    public ObservableCollection<Point> Vertices { get; set; } = new(vertices);
+    public Dictionary<Point, (int, int)> Midpoints { get; set; } = midpoints;
+
+    public Point Center
+    {
+        get => _center;
+        set => SetField(ref _center, value);
+    }
+
+    private ShapeType _type = type;
+    private Color _color = color;
+    private int _thickness = thickness;
+    [JsonIgnore] private bool _selected = false;
+    private Point _center = center;
     public event PropertyChangedEventHandler? PropertyChanged;
 
     protected virtual void OnPropertyChanged([CallerMemberName] string? propertyName = null)

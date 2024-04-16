@@ -4,5 +4,6 @@ public enum Mode
 {
     Select,
     Selected,
-    Draw
+    Draw,
+    Drag
 }

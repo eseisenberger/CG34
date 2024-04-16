@@ -1,23 +1,99 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Runtime.CompilerServices;
+using System.IO;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using CG34.Classes;
 using CG34.Extensions;
+using Microsoft.Win32;
+using Newtonsoft.Json;
 
 namespace CG34;
 
 /// <summary>
 /// Interaction logic for MainWindow.xaml
 /// </summary>
-public partial class MainWindow : Window, INotifyPropertyChanged
+public partial class MainWindow : INotifyPropertyChanged
 {
-    private WriteableBitmap _source;
+    private WriteableBitmap _source = default!;
     private WriteableBitmap _previousSource;
     private ShapeType? _selectedShapeTypeType;
     private Mode Mode = Mode.Select;
+    private const string SaveDirectory = @"./Saves";
+
+
+    private Shape? SelectedShape
+    {
+        get => _selectedShape;
+        set
+        {
+            if (value is null)
+            {
+                if (_selectedShape is null)
+                    return;
+
+                _selectedShape.Selected = false;
+                _selectedShape = value;
+            }
+            else if (_selectedShape is null)
+            {
+                _selectedShape = value;
+                _selectedShape.Selected = true;
+            }
+            else
+            {
+                _selectedShape.Selected = false;
+                _selectedShape = value;
+                _selectedShape.Selected = true;
+            }
+
+            _ = HandleShapeChanged();
+        }
+    }
+
+    private Point SelectedPoint = default!;
+
+    private async Task HandleShapeChanged()
+    {
+        await RedrawAll();
+        if (_selectedShape is not null)
+        {
+            var pixels = Source.GetPixels();
+            pixels = await DrawPoints(_selectedShape, pixels);
+            Source.WritePixels(pixels);
+        }
+    }
+
+    private async Task<byte[]> DrawPoints(Shape shape, byte[] pixels)
+    {
+        pixels = await DrawPoint(shape.Center, pixels, Colors.DarkOrange);
+
+        for (var i = 0; i < shape.Vertices.Count; i++)
+            pixels = await DrawPoint(shape.Vertices[i], pixels, Colors.DarkRed);
+
+        var keys = shape.Midpoints.Keys.ToList();
+        for (var i = 0; i < shape.Midpoints.Count; i++)
+            pixels = await DrawPoint(keys[i], pixels, Colors.CadetBlue);
+
+        return pixels;
+    }
+
+    public bool Antialiasing
+    {
+        get => _antialiasing;
+        set
+        {
+            SetField(ref _antialiasing, value);
+            _ = RedrawAll();
+        }
+    }
+
+    public Color SelectedColor
+    {
+        get => _selectedColor;
+        set => SetField(ref _selectedColor, value);
+    }
 
     public Shape? CurrentShape
     {
@@ -25,8 +101,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetField(ref _currentShape, value);
     }
 
-    public ObservableCollection<Shape> Queue = [];
-    public ObservableCollection<Point> CurrentShapePoints = [];
+    public ObservableCollection<Shape> Queue { get; set; } = [];
 
     public int X
     {
@@ -46,14 +121,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         set => SetField(ref _source, value);
     }
 
-    public int DefaultWidth { get; set; } = 600;
-    public int DefaultHeight { get; set; } = 400;
-    private int Stride;
+    public int DefaultWidth { get; } = 600;
+    public int DefaultHeight { get; } = 400;
+    private readonly int Stride;
     private double _scale;
-    private double Thickness = 1;
     private int _x;
     private int _y;
     private Shape? _currentShape;
+    private Color _selectedColor = Colors.Black;
+    private bool _antialiasing;
+    private Shape? _selectedShape = null;
 
     public double Scale
     {
@@ -74,12 +151,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Scale = 1;
         _previousSource = Source;
         PreviewMouseWheel += OnMouseWheel;
-        KeyDown += OnKey;
+        KeyDown += OnKeyPress;
 
         InitializeComponent();
     }
 
-    private async void OnMouse(object sender, MouseEventArgs e)
+    private async void OnMouseMovement(object sender, MouseEventArgs e)
     {
         if (sender is not Image image)
             return;
@@ -87,26 +164,107 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var pos = e.GetPosition(image);
         X = (int)(pos.X / Scale);
         Y = (int)(pos.Y / Scale);
-        if (CurrentShape is not null)
-        {
-            Source = new WriteableBitmap(_previousSource);
-            var pixels = Source.GetPixels();
 
-            var shape = new Shape(CurrentShape)
+        var pixels = _previousSource.GetPixels();
+
+
+        if (SelectedShape is not null && SelectedPoint != default && Mode == Mode.Drag)
+        {
+            var point = new Point(X, Y);
+            Point p;
+            p = SelectedShape.Vertices.FirstOrDefault(v => v == SelectedPoint);
+            if (p != default)
             {
-                End = new Point(X, Y)
-            };
-            pixels = CurrentShape.Type switch
+                var i = SelectedShape.Vertices.IndexOf(p);
+                SelectedShape.Vertices[i] = new Point(X, Y);
+                if (SelectedShape.Type is ShapeType.Line or ShapeType.ThickLine)
+                    SelectedShape.Center = SelectedShape.Vertices[0].Midpoint(SelectedShape.Vertices[1]);
+                if (SelectedShape.Type is ShapeType.Polygon)
+                {
+                    SelectedShape.Center = SelectedShape.Vertices.Average();
+                    var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+                    foreach (var midpoint in midpoints)
+                    {
+                        SelectedShape.Midpoints.Remove(midpoint.Key);
+                        var (s, m) = midpoint.Value;
+                        SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
+                            (s, m));
+                    }
+                }
+            }
+
+            p = SelectedShape.Midpoints.Keys.FirstOrDefault(v => v.DistanceTo(SelectedPoint) < 10);
+            if (p != default)
             {
-                ShapeType.Line => await DrawLine(shape, pixels),
-                ShapeType.ThickLine => await DrawThickLine(shape, pixels, (int)Math.Round(Thickness, 0)),
-                ShapeType.Circle => await DrawCircle(shape, pixels),
-                _ => throw new ArgumentOutOfRangeException()
-            };
-            shape.Done = true;
+                var vec = point - p;
+                var (start, end) = SelectedShape.Midpoints[p];
+                var (x, y) = (SelectedShape.Vertices[start] + vec).GetCoordinates();
+                SelectedShape.Vertices[start] = new Point(x, y);
+                (x, y) = (SelectedShape.Vertices[end] + vec).GetCoordinates();
+                SelectedShape.Vertices[end] = new Point(x, y);
+                SelectedShape.Center = SelectedShape.Vertices.Average();
+                var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+                foreach (var midpoint in midpoints)
+                {
+                    SelectedShape.Midpoints.Remove(midpoint.Key);
+                    var (s, m) = midpoint.Value;
+                    SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]), (s, m));
+                }
+            }
+            else if (SelectedPoint == SelectedShape.Center)
+            {
+                var vec = point - SelectedShape.Center;
+                SelectedShape.Center = point;
+
+                for (var i = 0; i < SelectedShape.Vertices.Count; i++)
+                {
+                    var (x, y) = (SelectedShape.Vertices[i] + vec).GetCoordinates();
+                    SelectedShape.Vertices[i] = new Point(x, y);
+                }
+
+                var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+                foreach (var midpoint in midpoints)
+                {
+                    SelectedShape.Midpoints.Remove(midpoint.Key);
+                    var (s, m) = midpoint.Value;
+                    SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
+                        (s, m));
+                }
+            }
+
+
+            SelectedPoint = point;
+
+            pixels = await Draw(SelectedShape, pixels);
+            pixels = await DrawPoints(SelectedShape, pixels);
 
             Source.WritePixels(pixels);
+            return;
         }
+
+        if (CurrentShape is null)
+            return;
+
+        Source = _previousSource.Clone();
+
+        var shape = new Shape(CurrentShape);
+        shape.Vertices.Add(new Point(X, Y));
+        pixels = await Draw(shape, pixels);
+
+        Source.WritePixels(pixels);
+    }
+
+    private async Task<byte[]> Draw(Shape shape, byte[] pixels)
+    {
+        return shape.Type switch
+        {
+            ShapeType.Line => await DrawLine(shape, pixels),
+            ShapeType.ThickLine => await DrawThickLine(shape, pixels),
+            ShapeType.Circle => await DrawCircle(shape, pixels),
+            ShapeType.Select => pixels,
+            ShapeType.Polygon => await DrawPolygon(shape, pixels),
+            _ => throw new ArgumentOutOfRangeException()
+        };
     }
 
     private void ClearCanvas()
@@ -125,24 +283,36 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _previousSource = new WriteableBitmap(Source);
     }
 
-    private async void OnKey(object sender, KeyEventArgs e)
+    private async void OnKeyPress(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Z)
+        if (e.Key != Key.Z)
+            return;
+
+        switch (Keyboard.Modifiers)
         {
-            if (Keyboard.Modifiers == ModifierKeys.Control)
+            case ModifierKeys.Control:
                 await Undo();
-            else if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+                break;
+            case ModifierKeys.Control | ModifierKeys.Shift:
                 await Redo();
+                break;
         }
     }
 
     private async Task Undo()
     {
-        if (Queue.Count(s => s.Removed == false) == 0)
+        if (Queue.All(s => s.Removed))
             return;
 
         Queue.Last(s => s.Removed == false).Removed = true;
+
+        await RedrawAll();
+    }
+
+    public async Task RedrawAll()
+    {
         ClearCanvas();
+
         foreach (var shape in Queue)
         {
             shape.Done = false;
@@ -157,19 +327,51 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             Scale = Math.Clamp(Scale + e.Delta / (10 * 120.0), 0.05, 25.0);
         }
-
-        if (Keyboard.Modifiers == ModifierKeys.Alt)
-        {
-            Thickness = Math.Clamp(Thickness + e.Delta / (30 * 120.0), 1, 25);
-        }
     }
 
-    private void Open(object sender, RoutedEventArgs e)
+    private async void Open(object sender, RoutedEventArgs e)
     {
+        OpenFileDialog dialog = new()
+        {
+            Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*"
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        Queue.Clear();
+
+        var file = await File.ReadAllTextAsync(dialog.FileName);
+        var queue = JsonConvert.DeserializeObject<ObservableCollection<Shape>>(file);
+        if (queue is null)
+            return;
+
+        foreach (var shape in queue)
+        {
+            Queue.Add(shape);
+        }
+
+        await RedrawAll();
     }
 
     private void Save(object sender, RoutedEventArgs e)
     {
+        Directory.CreateDirectory(SaveDirectory);
+
+        SaveFileDialog dialog = new()
+        {
+            Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+            FileName = $"save_{DateTime.Now}",
+            InitialDirectory = Path.GetFullPath(SaveDirectory),
+            DefaultExt = ".json"
+        };
+        if (dialog.ShowDialog() == false)
+            return;
+
+        var content = JsonConvert.SerializeObject(Queue);
+        using var sw = new StreamWriter(dialog.FileName);
+        sw.Write(content);
+        sw.Close();
     }
 
     private void Reset(object sender, RoutedEventArgs e)
@@ -179,16 +381,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
 
-    private void ShapeClick(object sender, RoutedEventArgs e)
+    private void ToolClick(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton button)
             return;
 
-        if (button.Tag is not ShapeType shape)
+        if (button.Content is not ShapeType shape)
             return;
+
+
+        SelectedShape = null;
+        SelectedPoint = default;
+        Mode = Mode.Select;
 
         if (SelectedShapeType != shape)
         {
+            if (shape == ShapeType.Select && Queue.Any(s => !s.Removed))
+                SelectedShape = Queue.First(s => !s.Removed);
             SelectedShapeType = shape;
             Mode = Mode.Selected;
         }
@@ -199,31 +408,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void AntialiasingToggle(object sender, RoutedEventArgs e)
-    {
-    }
-
-    public event PropertyChangedEventHandler? PropertyChanged;
-
-    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
-    }
-
-    private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
-    {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
-        field = value;
-        OnPropertyChanged(propertyName);
-    }
 
     private async void ImageMouseDown(object sender, MouseButtonEventArgs e)
     {
         var image = sender as Image;
 
         var position = e.GetPosition(image);
-        position.X /= Scale;
-        position.Y /= Scale;
+        position.X = (int)(position.X / Scale);
+        position.Y = (int)(position.Y / Scale);
 
         Console.WriteLine(position);
         switch (Mode)
@@ -234,32 +426,118 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             case Mode.Selected:
                 if (SelectedShapeType is null)
                     throw new Exception("Selected shape type is null in selected mode");
-                CurrentShape = new Shape
+                if (SelectedShapeType != ShapeType.Select)
                 {
-                    Start = position,
-                    Type = SelectedShapeType.Value
-                };
-                Mode = Mode.Draw;
+                    if (SelectedShapeType == ShapeType.Circle)
+                    {
+                        CurrentShape = new Shape
+                        {
+                            Center = position,
+                            Vertices = [],
+                            Type = SelectedShapeType.Value,
+                            Color = SelectedColor
+                        };
+                    }
+                    else
+                    {
+                        CurrentShape = new Shape
+                        {
+                            Vertices = [position],
+                            Type = SelectedShapeType.Value,
+                            Color = SelectedColor
+                        };
+                    }
+
+                    Mode = Mode.Draw;
+                }
+
+                if (SelectedShape is null)
+                    return;
+
+                if (position.DistanceTo(SelectedShape.Center) <= 10)
+                    SelectedPoint = SelectedShape.Center;
+                else
+                {
+                    var v = SelectedShape.Vertices.FirstOrDefault(v => v.DistanceTo(position) <= 10);
+                    if (v != default)
+                        SelectedPoint = v;
+                    else
+                    {
+                        v = SelectedShape.Midpoints.Keys.FirstOrDefault(v => v.DistanceTo(position) <= 10);
+                        if (v != default)
+                            SelectedPoint = v;
+
+                        else
+                        {
+                            SelectedPoint = default;
+                            break;
+                        }
+                    }
+                }
+
+                SelectedShape.Removed = true;
+                await RedrawAll();
+                SelectedShape.Removed = false;
+
+                Source = _previousSource.Clone();
+
+                var pixels = Source.GetPixels();
+
+                pixels = await Draw(SelectedShape, pixels);
+                pixels = await DrawPoints(SelectedShape, pixels);
+
+                Source.WritePixels(pixels);
+
+                Mode = Mode.Drag;
+
                 break;
             case Mode.Draw:
                 if (CurrentShape is null)
                     throw new Exception("Shape is null in draw mode");
-                CurrentShape.End = position;
+                CurrentShape.Vertices.Add(position);
+                if (CurrentShape.Type is ShapeType.Line or ShapeType.ThickLine)
+                    CurrentShape.Center = CurrentShape.Vertices[0].Midpoint(CurrentShape.Vertices[1]);
+                if (CurrentShape.Type is ShapeType.Polygon)
+                {
+                    if (position.DistanceTo(CurrentShape.Vertices.First()) > 10)
+                        break;
+                    var v = CurrentShape.Vertices.Last();
+                    CurrentShape.Vertices.Remove(v);
+                    CurrentShape.Center = CurrentShape.Vertices.Average();
+                    for (var i = 0; i < CurrentShape.Vertices.Count - 1; i++)
+                    {
+                        CurrentShape.Midpoints.Add(
+                            CurrentShape.Vertices[i].Midpoint(CurrentShape.Vertices[i + 1]),
+                            (i, i + 1));
+                    }
+
+                    CurrentShape.Midpoints.Add(
+                        CurrentShape.Vertices.Last().Midpoint(CurrentShape.Vertices.First()),
+                        (CurrentShape.Vertices.Count - 1, 0));
+                }
+
                 Queue.Add(new Shape(CurrentShape));
                 await DrawAll();
                 CurrentShape = null;
+                Mode = Mode.Selected;
+                _previousSource = Source.Clone();
+                break;
+            case Mode.Drag:
+                SelectedPoint = default;
                 Mode = Mode.Selected;
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
         }
 
-        Queue = new ObservableCollection<Shape>(Queue.Where(s => s.Removed == false));
+        var removed = Queue.Where(s => s.Removed);
+        foreach (var r in removed)
+            Queue.Remove(r);
     }
 
     private async Task Redo()
     {
-        if (Queue.Count(s => s.Removed) == 0)
+        if (!Queue.Any(s => s.Removed))
             return;
 
         var shape = Queue.First(s => s.Removed);
@@ -271,13 +549,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         var pixels = _previousSource.GetPixels();
 
-        foreach (var shape in Queue.Where(s => s.Done == false && s.Removed == false))
+        foreach (var shape in Queue.Where(s => s is { Done: false, Removed: false }))
         {
             pixels = shape.Type switch
             {
                 ShapeType.Line => await DrawLine(shape, pixels),
-                ShapeType.ThickLine => await DrawThickLine(shape, pixels, (int)Math.Round(Thickness, 0)),
+                ShapeType.ThickLine => await DrawThickLine(shape, pixels),
                 ShapeType.Circle => await DrawCircle(shape, pixels),
+                ShapeType.Polygon => await DrawPolygon(shape, pixels),
                 _ => throw new ArgumentOutOfRangeException()
             };
             shape.Done = true;
@@ -287,286 +566,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _previousSource = Source;
     }
 
-    private async Task<byte[]> DrawLine(Shape shape, byte[] pixels)
+    private void QueueItemMousedown(object sender, MouseButtonEventArgs e)
     {
-        DrawLineAA(
-            (int)shape.Start.X,
-            (int)shape.Start.Y,
-            (int)shape.End.X,
-            (int)shape.End.Y,
-            0,
-            ref pixels
-        );
-        return pixels;
-    }
-
-    private void SymmetricLine(int x0, int y0, int x1, int y1, byte value, int channel, ref byte[] pixels,
-        int thickness = 1)
-    {
-        x0 = Math.Clamp(x0, 0, DefaultWidth);
-        x1 = Math.Clamp(x1, 0, DefaultWidth);
-
-        y0 = Math.Clamp(y0, 0, DefaultHeight);
-        y1 = Math.Clamp(y1, 0, DefaultHeight);
-
-        var steep = Math.Abs(y1 - y0) > Math.Abs(x1 - x0);
-
-        if (steep)
-        {
-            (x0, y0) = (y0, x0);
-            (x1, y1) = (y1, x1);
-        }
-
-        if (x0 > x1)
-        {
-            (x0, x1) = (x1, x0);
-            (y0, y1) = (y1, y0);
-        }
-
-        var dx = x1 - x0;
-        var dy = Math.Abs(y1 - y0);
-
-        var d = dx / 2;
-        var yStep = (y0 < y1) ? 1 : -1;
-        var y = y0;
-        var yEnd = y1;
-
-        var midPointX = x0 + (x1 - x0) / 2;
-
-        for (int x = x0, xEnd = x1; x <= midPointX; x++, xEnd--)
-        {
-            for (var i = -(thickness - 1) / 2; i <= thickness / 2; i++)
-            {
-                if (steep)
-                {
-                    PutPixel(y + i, x, value, channel, ref pixels);
-                    PutPixel(yEnd + i, xEnd, value, channel, ref pixels);
-                }
-                else
-                {
-                    PutPixel(x, y + i, value, channel, ref pixels);
-                    PutPixel(xEnd, yEnd + i, value, channel, ref pixels);
-                }
-            }
-
-            d -= dy;
-            if (d >= 0)
-                continue;
-
-            y += yStep;
-            yEnd -= yStep;
-            d += dx;
-        }
-    }
-
-    private async Task<byte[]> DrawThickLine(Shape shape, byte[] pixels, int n = 3)
-    {
-        await Parallel.ForAsync(0, 3,
-            (channel, _) =>
-            {
-                SymmetricLine(
-                    (int)shape.Start.X,
-                    (int)shape.Start.Y,
-                    (int)shape.End.X,
-                    (int)shape.End.Y,
-                    0,
-                    channel,
-                    ref pixels,
-                    n
-                );
-                return ValueTask.CompletedTask;
-            });
-        return pixels;
-    }
-
-    private async Task<byte[]> DrawCircle(Shape shape, byte[] pixels)
-    {
-        var radius =
-            (int)Math.Sqrt(Math.Pow(shape.Start.X - shape.End.X, 2) + Math.Pow(shape.Start.Y - shape.End.Y, 2));
-
-        await Parallel.ForAsync(0, 3,
-            (channel, _) =>
-            {
-                MidpointCircle(
-                    radius,
-                    (int)shape.Start.X,
-                    (int)shape.Start.Y,
-                    0,
-                    channel,
-                    ref pixels
-                );
-                return ValueTask.CompletedTask;
-            });
-        return pixels;
-    }
-
-    void MidpointCircle(int R, int cx, int cy, byte value, int channel, ref byte[] pixels)
-    {
-        var dE = 3;
-        var dSE = 5 - 2 * R;
-        var d = 1 - R;
-        var x = 0;
-        var y = R;
-
-        PlotCirclePoints(cx, cy, x, y, value, channel, ref pixels);
-
-        while (y >= x)
-        {
-            if (d < 0)
-            {
-                d += dE;
-                dE += 2;
-                dSE += 2;
-            }
-            else
-            {
-                d += dSE;
-                dE += 2;
-                dSE += 4;
-                --y;
-            }
-
-            ++x;
-            PlotCirclePoints(cx, cy, x, y, value, channel, ref pixels);
-        }
-    }
-
-    private void PlotCirclePoints(int cx, int cy, int x, int y, byte value, int channel, ref byte[] pixels)
-    {
-        PutPixel(cx + x, cy - y, value, channel, ref pixels);
-        PutPixel(cx + y, cy - x, value, channel, ref pixels);
-        PutPixel(cx - y, cy - x, value, channel, ref pixels);
-        PutPixel(cx - x, cy - y, value, channel, ref pixels);
-        PutPixel(cx - x, cy + y, value, channel, ref pixels);
-        PutPixel(cx - y, cy + x, value, channel, ref pixels);
-        PutPixel(cx + y, cy + x, value, channel, ref pixels);
-        PutPixel(cx + x, cy + y, value, channel, ref pixels);
-    }
-
-
-    private void PutPixel(int x, int y, byte value, int channel, ref byte[] pixels)
-    {
-        if (x < 0 || x >= DefaultWidth || y < 0 || y >= DefaultHeight)
+        if (sender is not Border { Tag: Shape shape })
             return;
 
-        var index = y * Stride + x * 4 + channel;
-        pixels[index] = value;
+        Console.WriteLine(shape.Color);
+
+        SelectedShape = SelectedShape == shape ? null : shape;
     }
 
-    private byte GetPixel(int x, int y, int channel, byte[] pixels)
+    private async void HandleColorChanged(object? sender, EventArgs e)
     {
-        x = Math.Clamp(x, 0, DefaultWidth - 1);
-        y = Math.Clamp(y, 0, DefaultHeight - 1);
-        var index = y * Stride + x * 4 + channel;
-        return pixels[index];
-    }
-
-    private void DrawLineAA(int x1, int y1, int x2, int y2, byte value, ref byte[] pixels,
-        int thickness = 1)
-    {
-        x1 = Math.Clamp(x1, 0, DefaultWidth);
-        x2 = Math.Clamp(x2, 0, DefaultWidth);
-
-        y1 = Math.Clamp(y1, 0, DefaultHeight);
-        y2 = Math.Clamp(y2, 0, DefaultHeight);
-
-        var steep = Math.Abs(y2 - y1) > Math.Abs(x2 - x1);
-
-        if (steep)
-        {
-            Console.WriteLine("Steep");
-            (x1, y1) = (y1, x1);
-            (x2, y2) = (y2, x2);
-        }
-
-        if (x1 > x2)
-        {
-            Console.WriteLine("Flip");
-            (x1, x2) = (x2, x1);
-            (y1, y2) = (y2, y1);
-        }
-
-        var dx = x2 - x1;
-        var dy = Math.Abs(y2 - y1);
-        var yStep = (y1 < y2) ? 1 : -1;
-        var d = 2 * (dy - dx);
-
-        int incrE = 2 * dy;
-        int incrNE = 2 * (dy - dx);
-
-        var x = x1;
-        var y = y1;
-
-        var length2 = 2 * Math.Sqrt(Math.Pow(dx, 2) + Math.Pow(dy, 2));
-        double D;
-        if (d <= 0)
-            D = (d + dx) / length2;
-        else
-            D = (d - dx) / length2;
-
-        double Du = (2 * dx - (d - dx)) / length2;
-        double Dl = (2 * dx + (d - dx)) / length2;
-        //Console.WriteLine("\n\n-------------------------\n\n");
-
-        Write(ref pixels);
-        while (x < x2)
-        {
-            if (d <= 0)
-            {
-                x++;
-                D = (d + dx) / length2;
-                Du = (2 * dx - (d + dx)) / length2;
-                Dl = (2 * dx + (d + dx)) / length2;
-                d += incrE;
-            }
-            else
-            {
-                y += yStep;
-                x++;
-                D = (d - dx) / length2;
-                Du = (2 * dx - (d - dx)) / length2;
-                Dl = (2 * dx + (d - dx)) / length2;
-                d += incrNE;
-            }
-
-            Write(ref pixels);
-        }
-
-        void Write(ref byte[] pixels)
-        {
-            if (steep)
-            {
-                IntensifyPixel(y + 1, x, Du, value, ref pixels);
-                IntensifyPixel(y, x, D, value, ref pixels, true);
-                IntensifyPixel(y - 1, x, Dl, value, ref pixels);
-            }
-            else
-            {
-                IntensifyPixel(x + 1, y, Dl, value, ref pixels);
-                IntensifyPixel(x, y, D, value, ref pixels, true);
-                IntensifyPixel(x - 1, y, Du, value, ref pixels);
-            }
-        }
-    }
-
-    void IntensifyPixel(int x, int y, double distance, byte value, ref byte[] pixels, bool main = false)
-    {
-        var intensity = GetIntensityFactor(x, y, distance);
-        //if (main)
-        //Console.WriteLine($"x:{x}, y:{y}, D:{distance:0.##}, int:{intensity:0.##}");
-        for (var channel = 0; channel < 3; channel++)
-        {
-            var scaledIntensity = (byte)(intensity * value + (1 - intensity) * GetPixel(x, y, channel, pixels));
-            PutPixel(x, y, scaledIntensity, channel, ref pixels);
-        }
-    }
-
-    double GetIntensityFactor(int x, int y, double distance)
-    {
-        var maxIntensity = 1.0;
-        var intensityFactor = maxIntensity - Math.Abs(distance);
-
-        intensityFactor = Math.Clamp(intensityFactor, 0, maxIntensity);
-        return intensityFactor;
+        await RedrawAll();
     }
 }
