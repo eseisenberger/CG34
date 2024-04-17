@@ -36,7 +36,6 @@ public class Shape(
         get => _type;
         set => SetField(ref _type, value);
     }
-
     public Color Color
     {
         get => _color;

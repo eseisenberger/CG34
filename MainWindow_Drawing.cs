@@ -1,4 +1,5 @@
-﻿using CG34.Classes;
+﻿using System.Windows.Controls;
+using CG34.Classes;
 using CG34.Extensions;
 
 namespace CG34;
@@ -414,5 +415,17 @@ public partial class MainWindow
 
         intensityFactor = Math.Clamp(intensityFactor, 0, MaxIntensity);
         return intensityFactor;
+    }
+
+    private async void RemoveShape(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button)
+            return;
+
+        if (button.Tag is not Shape shape)
+            return;
+
+        Queue.Remove(shape);
+        await RedrawAll();
     }
 }

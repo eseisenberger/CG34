@@ -113,6 +113,8 @@
                                                    ColorChanged="HandleColorChanged" />
                                 <TextBox Text="{Binding Thickness, Mode=TwoWay}"
                                          Visibility="{Binding Type, Converter={StaticResource ShapeTypeToVisibilityConverter}}" />
+                                <Button Content="{materialIcons:MaterialIconExt Kind=Remove}" Click="RemoveShape"
+                                        Tag="{Binding}" />
                             </StackPanel>
                         </Border>
                     </DataTemplate>
