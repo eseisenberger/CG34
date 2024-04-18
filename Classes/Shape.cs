@@ -18,7 +18,8 @@ public class Shape(
     {
     }
 
-    public Shape(Shape other) : this(other.Center, other.Vertices, other.Midpoints, other.Type, other.Color,
+    public Shape(Shape other) : this(other.Center, new ObservableCollection<Point>(other.Vertices),
+        new Dictionary<Point, (int, int)>(other.Midpoints), other.Type, other.Color,
         other.Thickness)
     {
     }
@@ -36,6 +37,7 @@ public class Shape(
         get => _type;
         set => SetField(ref _type, value);
     }
+
     public Color Color
     {
         get => _color;
@@ -59,6 +61,16 @@ public class Shape(
     {
         get => _selected;
         set => SetField(ref _selected, value);
+    }
+
+    public Point GetVertex(Func<Point, bool> predicate)
+    {
+        return Vertices.FirstOrDefault(predicate);
+    }
+
+    public Point GetMidpoint(Func<Point, bool> predicate)
+    {
+        return Midpoints.Keys.FirstOrDefault(predicate);
     }
 
     public ObservableCollection<Point> Vertices { get; set; } = new(vertices);

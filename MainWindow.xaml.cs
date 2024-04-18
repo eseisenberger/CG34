@@ -79,6 +79,7 @@ public partial class MainWindow : INotifyPropertyChanged
         return pixels;
     }
 
+
     public bool Antialiasing
     {
         get => _antialiasing;
@@ -156,102 +157,123 @@ public partial class MainWindow : INotifyPropertyChanged
         InitializeComponent();
     }
 
+    private async Task RedrawShape(Shape shape)
+    {
+        Source = _previousSource.Clone();
+
+        var pixels = Source.GetPixels();
+        pixels = await Draw(shape, pixels);
+
+        Source.WritePixels(pixels);
+    }
+
+    void HandleVertexMovement(Point point)
+    {
+        if (SelectedShape is null)
+            return;
+
+        var i = SelectedShape.Vertices.IndexOf(point);
+        SelectedShape.Vertices[i] = new Point(X, Y);
+        if (SelectedShape.Type is ShapeType.Line or ShapeType.ThickLine)
+            SelectedShape.Center = SelectedShape.Vertices[0].Midpoint(SelectedShape.Vertices[1]);
+        if (SelectedShape.Type is not ShapeType.Polygon)
+            return;
+
+        SelectedShape.Center = SelectedShape.Vertices.Average();
+        var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+        foreach (var midpoint in midpoints)
+        {
+            SelectedShape.Midpoints.Remove(midpoint.Key);
+            var (s, m) = midpoint.Value;
+            SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
+                (s, m));
+        }
+    }
+
+    void HandleMidpointMovement(Point mousePoint, Point originalPoint)
+    {
+        if (SelectedShape is null)
+            return;
+
+        var moveVector = mousePoint - originalPoint;
+        var (start, end) = SelectedShape.Midpoints[originalPoint];
+        var (x, y) = (SelectedShape.Vertices[start] + moveVector).GetCoordinates();
+        SelectedShape.Vertices[start] = new Point(x, y);
+        (x, y) = (SelectedShape.Vertices[end] + moveVector).GetCoordinates();
+        SelectedShape.Vertices[end] = new Point(x, y);
+        SelectedShape.Center = SelectedShape.Vertices.Average();
+        var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+        foreach (var midpoint in midpoints)
+        {
+            SelectedShape.Midpoints.Remove(midpoint.Key);
+            var (s, e) = midpoint.Value;
+            SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[e]), (s, e));
+        }
+    }
+
+    void HandleCenterMovement(Point point)
+    {
+        if (SelectedShape is null)
+            return;
+
+        var vec = point - SelectedShape.Center;
+        SelectedShape.Center = point;
+
+        for (var i = 0; i < SelectedShape.Vertices.Count; i++)
+        {
+            var (x, y) = (SelectedShape.Vertices[i] + vec).GetCoordinates();
+            SelectedShape.Vertices[i] = new Point(x, y);
+        }
+
+        var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
+        foreach (var midpoint in midpoints)
+        {
+            SelectedShape.Midpoints.Remove(midpoint.Key);
+            var (s, m) = midpoint.Value;
+            SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
+                (s, m));
+        }
+    }
+
     private async void OnMouseMovement(object sender, MouseEventArgs e)
     {
         if (sender is not Image image)
             return;
 
-        var pos = e.GetPosition(image);
-        X = (int)(pos.X / Scale);
-        Y = (int)(pos.Y / Scale);
+        var mousePosition = e.GetPosition(image);
+
+        X = (int)(mousePosition.X / Scale);
+        Y = (int)(mousePosition.Y / Scale);
+
+        var mousePoint = new Point(X, Y);
 
         var pixels = _previousSource.GetPixels();
 
 
-        if (SelectedShape is not null && SelectedPoint != default && Mode == Mode.Drag)
+        if (SelectedShape is null || SelectedPoint == default || Mode != Mode.Drag)
         {
-            var point = new Point(X, Y);
-            Point p;
-            p = SelectedShape.Vertices.FirstOrDefault(v => v == SelectedPoint);
-            if (p != default)
-            {
-                var i = SelectedShape.Vertices.IndexOf(p);
-                SelectedShape.Vertices[i] = new Point(X, Y);
-                if (SelectedShape.Type is ShapeType.Line or ShapeType.ThickLine)
-                    SelectedShape.Center = SelectedShape.Vertices[0].Midpoint(SelectedShape.Vertices[1]);
-                if (SelectedShape.Type is ShapeType.Polygon)
-                {
-                    SelectedShape.Center = SelectedShape.Vertices.Average();
-                    var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
-                    foreach (var midpoint in midpoints)
-                    {
-                        SelectedShape.Midpoints.Remove(midpoint.Key);
-                        var (s, m) = midpoint.Value;
-                        SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
-                            (s, m));
-                    }
-                }
-            }
+            if (CurrentShape is null)
+                return;
 
-            p = SelectedShape.Midpoints.Keys.FirstOrDefault(v => v.DistanceTo(SelectedPoint) < 10);
-            if (p != default)
-            {
-                var vec = point - p;
-                var (start, end) = SelectedShape.Midpoints[p];
-                var (x, y) = (SelectedShape.Vertices[start] + vec).GetCoordinates();
-                SelectedShape.Vertices[start] = new Point(x, y);
-                (x, y) = (SelectedShape.Vertices[end] + vec).GetCoordinates();
-                SelectedShape.Vertices[end] = new Point(x, y);
-                SelectedShape.Center = SelectedShape.Vertices.Average();
-                var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
-                foreach (var midpoint in midpoints)
-                {
-                    SelectedShape.Midpoints.Remove(midpoint.Key);
-                    var (s, m) = midpoint.Value;
-                    SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]), (s, m));
-                }
-            }
-            else if (SelectedPoint == SelectedShape.Center)
-            {
-                var vec = point - SelectedShape.Center;
-                SelectedShape.Center = point;
-
-                for (var i = 0; i < SelectedShape.Vertices.Count; i++)
-                {
-                    var (x, y) = (SelectedShape.Vertices[i] + vec).GetCoordinates();
-                    SelectedShape.Vertices[i] = new Point(x, y);
-                }
-
-                var midpoints = new Dictionary<Point, (int, int)>(SelectedShape.Midpoints);
-                foreach (var midpoint in midpoints)
-                {
-                    SelectedShape.Midpoints.Remove(midpoint.Key);
-                    var (s, m) = midpoint.Value;
-                    SelectedShape.Midpoints.Add(SelectedShape.Vertices[s].Midpoint(SelectedShape.Vertices[m]),
-                        (s, m));
-                }
-            }
-
-
-            SelectedPoint = point;
-
-            pixels = await Draw(SelectedShape, pixels);
-            pixels = await DrawPoints(SelectedShape, pixels);
-
-            Source.WritePixels(pixels);
+            var shape = new Shape(CurrentShape);
+            shape.Vertices.Add(mousePoint);
+            await RedrawShape(shape);
             return;
         }
 
-        if (CurrentShape is null)
-            return;
+        if (SelectedShape.GetVertex(v => v.DistanceTo(SelectedPoint) < 10) is var vertex && vertex != default)
+            HandleVertexMovement(vertex);
+        else if (SelectedShape.GetMidpoint(v => v.DistanceTo(SelectedPoint) < 10) is var midpoint &&
+                 midpoint != default)
+            HandleMidpointMovement(mousePoint, midpoint);
+        else if (SelectedShape.Center.DistanceTo(SelectedPoint) < 10)
+            HandleCenterMovement(mousePoint);
 
-        Source = _previousSource.Clone();
-
-        var shape = new Shape(CurrentShape);
-        shape.Vertices.Add(new Point(X, Y));
-        pixels = await Draw(shape, pixels);
-
+        pixels = await Draw(SelectedShape, pixels);
+        pixels = await DrawPoints(SelectedShape, pixels);
         Source.WritePixels(pixels);
+
+        SelectedPoint = mousePoint;
     }
 
     private async Task<byte[]> Draw(Shape shape, byte[] pixels)
@@ -397,7 +419,7 @@ public partial class MainWindow : INotifyPropertyChanged
         if (SelectedShapeType != shape)
         {
             if (shape == ShapeType.Select && Queue.Any(s => !s.Removed))
-                SelectedShape = Queue.First(s => !s.Removed);
+                SelectedShape = Queue.Last(s => !s.Removed);
             SelectedShapeType = shape;
             Mode = Mode.Selected;
         }
@@ -406,6 +428,14 @@ public partial class MainWindow : INotifyPropertyChanged
             SelectedShapeType = null;
             Mode = Mode.Select;
         }
+    }
+
+
+    async Task EraseShape(Shape shape)
+    {
+        shape.Removed = true;
+        await RedrawAll();
+        shape.Removed = false;
     }
 
 
@@ -421,32 +451,26 @@ public partial class MainWindow : INotifyPropertyChanged
         switch (Mode)
         {
             case Mode.Select:
-                //move
                 break;
             case Mode.Selected:
                 if (SelectedShapeType is null)
                     throw new Exception("Selected shape type is null in selected mode");
                 if (SelectedShapeType != ShapeType.Select)
                 {
-                    if (SelectedShapeType == ShapeType.Circle)
-                    {
-                        CurrentShape = new Shape
+                    CurrentShape = (SelectedShapeType == ShapeType.Circle)
+                        ? new Shape
                         {
                             Center = position,
                             Vertices = [],
                             Type = SelectedShapeType.Value,
                             Color = SelectedColor
-                        };
-                    }
-                    else
-                    {
-                        CurrentShape = new Shape
+                        }
+                        : new Shape
                         {
                             Vertices = [position],
                             Type = SelectedShapeType.Value,
                             Color = SelectedColor
                         };
-                    }
 
                     Mode = Mode.Draw;
                 }
@@ -475,19 +499,16 @@ public partial class MainWindow : INotifyPropertyChanged
                     }
                 }
 
-                SelectedShape.Removed = true;
-                await RedrawAll();
-                SelectedShape.Removed = false;
+                await EraseShape(SelectedShape);
 
                 Source = _previousSource.Clone();
 
                 var pixels = Source.GetPixels();
 
-                pixels = await Draw(SelectedShape, pixels);
-                pixels = await DrawPoints(SelectedShape, pixels);
+                await Draw(SelectedShape, pixels);
+                await DrawPoints(SelectedShape, pixels);
 
                 Source.WritePixels(pixels);
-
                 Mode = Mode.Drag;
 
                 break;
