@@ -428,4 +428,39 @@ public partial class MainWindow
         Queue.Remove(shape);
         await RedrawAll();
     }
+    
+    private async Task<byte[]> DrawBezierCurve(Shape shape, byte[] pixels)
+    {
+        if (shape.Vertices.Count != 4)
+            return pixels;
+        
+        var values = shape.Values;
+
+        await Parallel.ForAsync(0, 4, (channel, _) =>
+        {
+            for (double t = 0; t <= 1; t += 0.001)                                             
+            {                                                                                  
+                var point = CalculateBezierPoint(shape.Vertices.ToArray(), t);                 
+                PutPixel((int)point.X, (int)point.Y, values[channel], channel, ref pixels);
+            }
+
+            return ValueTask.CompletedTask;
+        });
+
+        return pixels;
+    }
+    
+    private static Point CalculateBezierPoint(Point[] points, double t)
+    {
+        double u = 1 - t;
+        double tt = t * t;
+        double uu = u * u;
+        double uuu = uu * u;
+        double ttt = tt * t;
+        
+        double x = uuu * points[0].X + 3 * uu * t * points[1].X + 3 * u * tt * points[2].X + ttt * points[3].X;
+        double y = uuu * points[0].Y + 3 * uu * t * points[1].Y + 3 * u * tt * points[2].Y + ttt * points[3].Y;
+
+        return new Point(x, y);
+    }
 }

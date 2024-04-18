@@ -6,5 +6,6 @@ public enum ShapeType
     Line,
     ThickLine,
     Polygon,
-    Circle
+    Circle,
+    Bezier
 }

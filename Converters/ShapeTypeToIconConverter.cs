@@ -16,6 +16,7 @@ public class ShapeTypeToIconConverter : IValueConverter
             ShapeType.Circle => MaterialIconKind.CircleOutline,
             ShapeType.Select => MaterialIconKind.CursorDefault,
             ShapeType.Polygon => MaterialIconKind.VectorPolyline,
+            ShapeType.Bezier => MaterialIconKind.VectorCurve,
             _ => throw new ArgumentOutOfRangeException()
         };
     }

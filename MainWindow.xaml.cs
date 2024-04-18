@@ -285,6 +285,7 @@ public partial class MainWindow : INotifyPropertyChanged
             ShapeType.Circle => await DrawCircle(shape, pixels),
             ShapeType.Select => pixels,
             ShapeType.Polygon => await DrawPolygon(shape, pixels),
+            ShapeType.Bezier => await DrawBezierCurve(shape, pixels),
             _ => throw new ArgumentOutOfRangeException()
         };
     }
@@ -537,6 +538,14 @@ public partial class MainWindow : INotifyPropertyChanged
                         (CurrentShape.Vertices.Count - 1, 0));
                 }
 
+                if (CurrentShape.Type is ShapeType.Bezier)
+                {
+                    if (CurrentShape.Vertices.Count < 4)
+                        break;
+
+                    CurrentShape.Center = CurrentShape.Vertices.Average();
+                }
+
                 Queue.Add(new Shape(CurrentShape));
                 await DrawAll();
                 CurrentShape = null;
@@ -578,6 +587,7 @@ public partial class MainWindow : INotifyPropertyChanged
                 ShapeType.ThickLine => await DrawThickLine(shape, pixels),
                 ShapeType.Circle => await DrawCircle(shape, pixels),
                 ShapeType.Polygon => await DrawPolygon(shape, pixels),
+                ShapeType.Bezier => await DrawBezierCurve(shape, pixels),
                 _ => throw new ArgumentOutOfRangeException()
             };
             shape.Done = true;

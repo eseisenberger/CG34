@@ -19,7 +19,7 @@
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="Auto" MinWidth="250" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -50,6 +50,8 @@
                               Content="{x:Static enums:ShapeType.Polygon}" />
                 <ToggleButton Style="{StaticResource ToolButton}" Click="ToolClick"
                               Content="{x:Static enums:ShapeType.Circle}" />
+                <ToggleButton Style="{StaticResource ToolButton}" Click="ToolClick"
+                                              Content="{x:Static enums:ShapeType.Bezier}" />
                 <local:ColorPicker ColorChanged="HandleColorChanged"
                                    Color="{Binding SelectedColor, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}" />
             </ui:SimpleStackPanel>
